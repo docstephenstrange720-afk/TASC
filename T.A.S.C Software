@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>T.A.S.C. Data Archive</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Use Inter font, suitable for a digital display -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #000;
+        }
+        /* Custom "Screen Glitch" Border */
+        .tasc-border {
+            border: 2px solid #00ff7f; /* Neon Green */
+            box-shadow: 0 0 10px rgba(0, 255, 127, 0.5), 0 0 20px rgba(0, 255, 127, 0.2);
+            position: relative;
+        }
+        .tasc-border::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; bottom: 0; right: 0;
+            border: 2px solid rgba(0, 150, 255, 0.3); /* Electric Blue highlight */
+            z-index: -1;
+        }
+        .tasc-text-neon {
+            color: #00ff7f;
+            text-shadow: 0 0 5px rgba(0, 255, 127, 0.7);
+        }
+        .tasc-bg-dark {
+            background-color: #0a1118;
+        }
+        .tasc-input {
+            background-color: #01060a;
+            border: 1px solid #00ff7f;
+            color: #ffffff;
+            font-size: 0.9rem;
+            padding: 0.5rem;
+            transition: all 0.2s;
+        }
+        .tasc-input:focus {
+            outline: none;
+            box-shadow: 0 0 8px rgba(0, 255, 127, 0.8);
+        }
+    </style>
+
+    <!-- Firebase SDK Imports -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global variables provided by the environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let db = null;
+        let auth = null;
+        let userId = null;
+
+        setLogLevel('Debug'); // Enable detailed logging
+
+        const initFirebase = async () => {
+            try {
+                const app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
+                // Authentication
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                // Get User ID and initialize UI elements
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        document.getElementById('user-status').textContent = `USER ID: ${userId}`;
+                        document.getElementById('db-status').textContent = 'STATUS: ONLINE (Firestore)';
+                        document.getElementById('db-status').classList.remove('text-yellow-500');
+                        document.getElementById('db-status').classList.add('tasc-text-neon');
+                        loadData(); // Attempt to load existing data on successful login
+                    } else {
+                        console.error("User is not signed in.");
+                        document.getElementById('db-status').textContent = 'STATUS: AUTH ERROR';
+                        document.getElementById('db-status').classList.remove('tasc-text-neon');
+                        document.getElementById('db-status').classList.add('text-red-500');
+                    }
+                });
+
+            } catch (error) {
+                console.error("Firebase initialization failed:", error);
+                document.getElementById('db-status').textContent = `STATUS: INIT FAILED`;
+                document.getElementById('db-status').classList.remove('tasc-text-neon');
+                document.getElementById('db-status').classList.add('text-red-500');
+            }
+        };
+
+        const getProfileDocRef = () => {
+            if (!db || !userId) {
+                console.error("Database or User ID not initialized.");
+                return null;
+            }
+            // Private data path: /artifacts/{appId}/users/{userId}/tasc_data/user_profile
+            return doc(db, `artifacts/${appId}/users/${userId}/tasc_data`, "user_profile");
+        };
+
+        window.saveData = async () => {
+            const saveButton = document.getElementById('save-button');
+            const originalText = saveButton.textContent;
+            saveButton.textContent = 'TRANSMITTING...';
+            saveButton.disabled = true;
+
+            const data = {
+                firstName: document.getElementById('firstName').value,
+                lastName: document.getElementById('lastName').value,
+                dob: document.getElementById('dob').value,
+                nationality: document.getElementById('nationality').value,
+                location: document.getElementById('location').value,
+                affiliations: document.getElementById('affiliations').value,
+                profileSummary: document.getElementById('profileSummary').value,
+                lastUpdated: new Date().toISOString()
+            };
+
+            const docRef = getProfileDocRef();
+            if (docRef) {
+                try {
+                    await setDoc(docRef, data);
+                    showMessage('Data successfully archived (Status Code: 200/OK)', 'tasc-text-neon');
+                } catch (e) {
+                    console.error("Error writing document: ", e);
+                    showMessage(`ARCHIVE FAILED (Error: ${e.code})`, 'text-red-500');
+                }
+            } else {
+                 showMessage('ARCHIVE FAILED (Database connection error)', 'text-red-500');
+            }
+
+            saveButton.textContent = originalText;
+            saveButton.disabled = false;
+        };
+
+        window.loadData = async () => {
+            const loadButton = document.getElementById('load-button');
+            const originalText = loadButton.textContent;
+            if (loadButton) {
+                loadButton.textContent = 'DECRYPTING...';
+                loadButton.disabled = true;
+            }
+
+
+            const docRef = getProfileDocRef();
+            if (docRef) {
+                try {
+                    const docSnap = await getDoc(docRef);
+
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        document.getElementById('firstName').value = data.firstName || '';
+                        document.getElementById('lastName').value = data.lastName || '';
+                        document.getElementById('dob').value = data.dob || '';
+                        document.getElementById('nationality').value = data.nationality || '';
+                        document.getElementById('location').value = data.location || '';
+                        document.getElementById('affiliations').value = data.affiliations || '';
+                        document.getElementById('profileSummary').value = data.profileSummary || '';
+                        showMessage(`Profile loaded. Last update: ${new Date(data.lastUpdated).toLocaleTimeString()}`, 'text-yellow-400');
+                    } else {
+                        showMessage("No archived data found. Loading default template.", 'text-yellow-400');
+                        // Load a default template if nothing exists
+                        document.getElementById('firstName').value = 'Srikant';
+                        document.getElementById('lastName').value = 'Tiwari';
+                        document.getElementById('dob').value = '1975-01-01';
+                        document.getElementById('nationality').value = 'Indian';
+                        document.getElementById('location').value = 'Mumbai, Maharashtra';
+                        document.getElementById('affiliations').value = 'Threat Analysis & Surveillance Cell (T.A.S.C.)';
+                        document.getElementById('profileSummary').value = 'Senior Field Agent. Highly skilled in close combat, tactical operations, and infiltration. Often operates under high-stress conditions.';
+                    }
+                } catch (e) {
+                    console.error("Error reading document: ", e);
+                    showMessage(`DECRYPTION FAILED (Error: ${e.code})`, 'text-red-500');
+                }
+            } else {
+                showMessage('DECRYPTION FAILED (Database connection error)', 'text-red-500');
+            }
+
+            if (loadButton) {
+                loadButton.textContent = originalText;
+                loadButton.disabled = false;
+            }
+        };
+
+        const showMessage = (message, colorClass) => {
+            const statusBox = document.getElementById('action-status');
+            statusBox.textContent = message;
+            statusBox.className = `p-2 mt-4 text-center text-sm font-mono rounded-lg transition-colors duration-500 ${colorClass}`;
+        };
+
+        // Initialize Firebase on window load
+        window.onload = initFirebase;
+    </script>
+</head>
+
+<body class="tasc-bg-dark text-white min-h-screen p-4 sm:p-8">
+
+    <div id="tasc-container" class="tasc-border max-w-7xl mx-auto rounded-lg shadow-2xl overflow-hidden">
+
+        <!-- T.A.S.C. Header Bar -->
+        <header class="bg-[#001020] p-3 border-b-2 border-b-[#00ff7f]">
+            <div class="flex justify-between items-center text-sm sm:text-lg font-mono">
+                <div class="flex items-center space-x-4">
+                    <span class="text-2xl font-black tasc-text-neon">T.A.S.C.</span>
+                    <span class="text-xs sm:text-sm text-gray-400">THREAT ANALYSIS AND SURVEILLANCE CELL | DETECT. PREVENT. PROTECT.</span>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <span class="text-xs text-red-500 font-bold">SECURITY LEVEL: L4</span>
+                    <button class="px-3 py-1 bg-[#102030] border border-red-500 text-red-400 hover:bg-red-900/30 transition rounded-md">LOGOUT</button>
+                    <div class="relative">
+                        <input type="text" placeholder="SEARCH DATABASE..." class="px-3 py-1 text-white bg-[#01060a] border border-[#00ff7f] focus:outline-none rounded-md text-xs sm:text-sm">
+                        <span class="absolute right-2 top-1/2 -translate-y-1/2 text-[#00ff7f]">🔍</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Navigation Tabs -->
+        <nav class="bg-[#102030] flex text-sm border-b border-[#00ff7f]/50">
+            <a href="#" class="p-3 border-r border-[#00ff7f]/50 bg-[#00ff7f] text-black font-bold">CASE FILES</a>
+            <a href="#" class="p-3 text-gray-400 hover:bg-[#00ff7f]/10 transition">RESOURCES</a>
+            <a href="#" class="p-3 text-gray-400 hover:bg-[#00ff7f]/10 transition">ALERTS</a>
+            <a href="#" class="p-3 text-gray-400 hover:bg-[#00ff7f]/10 transition">SUPPORT</a>
+        </nav>
+
+        <!-- Main Content Grid -->
+        <main class="grid grid-cols-1 lg:grid-cols-3 gap-6 p-6 tasc-bg-dark">
+
+            <!-- Profile/Form Area (2/3 width on desktop) -->
+            <div class="lg:col-span-2 space-y-6">
+
+                <h2 class="text-2xl font-bold tasc-text-neon border-b border-[#00ff7f]/50 pb-2">
+                    ARCHIVED CASE FILE: USER PROFILE
+                </h2>
+
+                <!-- Profile Summary & Photo Placeholder -->
+                <div class="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-6">
+                    <!-- Photo Placeholder -->
+                    <div class="flex-shrink-0 w-full sm:w-1/3 max-w-xs bg-[#01060a] border border-[#00ff7f] p-4 flex items-center justify-center rounded-lg h-64">
+                        <span class="tasc-text-neon text-lg text-center">SECURED PHOTO ASSET</span>
+                    </div>
+
+                    <!-- Profile Summary Input -->
+                    <div class="flex-grow">
+                        <label for="profileSummary" class="block text-sm font-mono text-gray-400 mb-2">PROFILE SUMMARY/MISSION DETAILS</label>
+                        <textarea id="profileSummary" rows="7" class="tasc-input w-full rounded-md"></textarea>
+                    </div>
+                </div>
+
+                <!-- Personal Data Inputs -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div class="space-y-1">
+                        <label for="firstName" class="block text-sm font-mono text-gray-400">FIRST NAME</label>
+                        <input type="text" id="firstName" class="tasc-input w-full rounded-md" placeholder="e.g. Srikant">
+                    </div>
+                    <div class="space-y-1">
+                        <label for="lastName" class="block text-sm font-mono text-gray-400">LAST NAME</label>
+                        <input type="text" id="lastName" class="tasc-input w-full rounded-md" placeholder="e.g. Tiwari">
+                    </div>
+                    <div class="space-y-1">
+                        <label for="dob" class="block text-sm font-mono text-gray-400">DATE OF BIRTH</label>
+                        <input type="date" id="dob" class="tasc-input w-full rounded-md">
+                    </div>
+                    <div class="space-y-1">
+                        <label for="nationality" class="block text-sm font-mono text-gray-400">NATIONALITY</label>
+                        <input type="text" id="nationality" class="tasc-input w-full rounded-md" placeholder="e.g. Indian">
+                    </div>
+                    <div class="space-y-1 sm:col-span-2">
+                        <label for="location" class="block text-sm font-mono text-gray-400">CURRENT LOCATION/DOMICILE</label>
+                        <input type="text" id="location" class="tasc-input w-full rounded-md" placeholder="e.g. Mumbai, Maharashtra">
+                    </div>
+                    <div class="space-y-1 sm:col-span-2">
+                        <label for="affiliations" class="block text-sm font-mono text-gray-400">AFFILIATIONS/ORG</label>
+                        <input type="text" id="affiliations" class="tasc-input w-full rounded-md" placeholder="e.g. T.A.S.C. / Mission Coordinator">
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4 pt-4 border-t border-[#00ff7f]/50">
+                    <button id="save-button" onclick="saveData()" class="px-6 py-3 font-bold text-black bg-[#00ff7f] rounded-md transition hover:bg-green-300 shadow-md shadow-[#00ff7f]/50 uppercase flex-1">
+                        ARCHIVE DATA (SAVE)
+                    </button>
+                    <button id="load-button" onclick="loadData()" class="px-6 py-3 font-bold text-[#00ff7f] border-2 border-[#00ff7f] bg-transparent rounded-md transition hover:bg-[#00ff7f]/20 uppercase flex-1">
+                        DECRYPT LATEST (LOAD)
+                    </button>
+                </div>
+
+                <div id="action-status" class="p-2 mt-4 text-center text-sm font-mono rounded-lg transition-colors duration-500 text-gray-400">
+                    INITIATE LOAD or ARCHIVE to begin.
+                </div>
+            </div>
+
+            <!-- Metadata Panel (1/3 width on desktop) -->
+            <div class="lg:col-span-1 tasc-bg-dark border-l-2 border-[#00ff7f]/50 lg:pl-6 space-y-6">
+                <h3 class="text-xl font-bold text-red-500 border-b border-red-500/50 pb-2">SYSTEM METADATA</h3>
+
+                <div class="space-y-3 text-sm">
+                    <div class="font-mono">
+                        <span class="text-gray-400">STATUS:</span>
+                        <span id="db-status" class="text-yellow-500 ml-2">STATUS: CONNECTING...</span>
+                    </div>
+                    <div class="font-mono break-all">
+                        <span class="text-gray-400">APP ID:</span>
+                        <span class="text-white ml-2 text-xs" id="app-id-display"></span>
+                    </div>
+                    <div class="font-mono break-all">
+                        <span class="text-gray-400">USER AUTH:</span>
+                        <span class="text-white ml-2 text-xs" id="user-status"></span>
+                    </div>
+                    <div class="font-mono">
+                        <span class="text-gray-400">LOCATION:</span>
+                        <span class="text-white ml-2">PRIVATE USER COLLECTION</span>
+                    </div>
+                    <div class="font-mono">
+                        <span class="text-gray-400">PROTOCOL:</span>
+                        <span class="text-white ml-2">SECURE HTTPS / FIREBASE</span>
+                    </div>
+                </div>
+
+                <h3 class="text-xl font-bold text-red-500 border-b border-red-500/50 pb-2 pt-4">ACCESS LOG</h3>
+                <div class="bg-[#01060a] p-3 h-48 overflow-y-scroll text-xs font-mono border border-red-500/50 rounded-md">
+                    <p class="text-red-400">[00:00:01] <span class="tasc-text-neon">INITIATING</span> FIREBASE CLIENT...</p>
+                    <p class="text-red-400">[00:00:02] <span class="tasc-text-neon">CONNECTING</span> TO AUTH SERVICE...</p>
+                    <p class="text-red-400">[00:00:03] <span class="tasc-text-neon">AUTHENTICATION</span> IN PROGRESS...</p>
+                    <p class="text-yellow-400">-- LOGS WILL UPDATE UPON ACTIONS --</p>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // Display App ID in the metadata panel
+        document.getElementById('app-id-display').textContent = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    </script>
+</body>
+</html>
